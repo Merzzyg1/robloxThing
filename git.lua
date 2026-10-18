@@ -13160,6 +13160,9 @@ updateColors(currentScroll,scroll)
 	  - Hover highlight on the command list
 	  - Thin scrollbars
 	  - Styles windows created later too (popups, server info, logs, plugins)
+	  - Tabbed hub menu replaces the bottom bar: sidebar tabs per category,
+	    search across all commands, command box with history.
+	    RightShift or the "IY" pill toggles it; the prefix key opens it.
 	  - Fixes: clientantikick, god, inviteprompt, emote, enablestate/disablestate,
 	    unhatspin, fireclickdetectors, fireproximityprompts
 ]]
@@ -13517,6 +13520,521 @@ do
 			end
 		end
 	end)
+
+	------------------------------------------------------------------
+	-- Tabbed hub menu (replaces the bottom bar)
+	--   RightShift / the "IY" pill at the top toggles it
+	--   The prefix key (;) opens it and focuses the command box
+	------------------------------------------------------------------
+	local SECTION_NAMES = {
+		"General", "Movement", "Waypoints", "Teleport", "Chat & Logs", "ESP",
+		"Camera", "World", "Lighting", "Players", "Character", "Animation",
+		"Input", "Tools", "Aliases", "Plugins",
+	}
+
+	-- IY's CMDs list uses blank entries as section separators
+	local sections = {}
+	local totalCommands = 0
+	do
+		local current = { Name = SECTION_NAMES[1], Commands = {} }
+		table.insert(sections, current)
+		for _, entry in ipairs(CMDs) do
+			if entry.NAME == "" then
+				current = { Name = SECTION_NAMES[#sections + 1] or ("Section " .. (#sections + 1)), Commands = {} }
+				table.insert(sections, current)
+			else
+				table.insert(current.Commands, entry)
+				totalCommands = totalCommands + 1
+			end
+		end
+	end
+
+	local HUB_W, HUB_H, SIDEBAR_W, HEADER_H = 620, 400, 150, 44
+	local Z = 20
+	local Dim = Color3.fromRGB(130, 150, 185)
+	local RowHover = Color3.fromRGB(26, 32, 54)
+
+	local function make(class, props, parent)
+		local inst = Instance.new(class)
+		for k, v in pairs(props) do
+			inst[k] = v
+		end
+		if parent then
+			inst.Parent = parent
+		end
+		return inst
+	end
+
+	local hub = make("Frame", {
+		Name = randomString(),
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(HUB_W, HUB_H),
+		BackgroundColor3 = Neon.Bg,
+		BorderSizePixel = 0,
+		Active = true,
+		Visible = false,
+		ZIndex = Z,
+	})
+	addCorner(hub, 10)
+	addGlow(hub)
+	local hubScale = make("UIScale", { Scale = 1 }, hub)
+
+	-- Header
+	local header = make("Frame", {
+		Size = UDim2.new(1, 0, 0, HEADER_H),
+		BackgroundTransparency = 1,
+		Active = true,
+		ZIndex = Z + 1,
+	}, hub)
+	addUnderline(header)
+
+	local hubTitle = make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(16, 6),
+		Size = UDim2.new(0, 260, 0, 20),
+		Font = Enum.Font.GothamBlack,
+		TextSize = 17,
+		TextColor3 = Color3.new(1, 1, 1),
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "INFINITE YIELD",
+		ZIndex = Z + 2,
+	}, header)
+	track(neonGradient(hubTitle))
+
+	make("TextLabel", {
+		BackgroundTransparency = 1,
+		Position = UDim2.fromOffset(16, 25),
+		Size = UDim2.new(0, 300, 0, 14),
+		Font = Enum.Font.Gotham,
+		TextSize = 11,
+		TextColor3 = Dim,
+		TextXAlignment = Enum.TextXAlignment.Left,
+		Text = "v" .. currentVersion .. "  •  RightShift to toggle  •  " .. totalCommands .. " commands",
+		ZIndex = Z + 2,
+	}, header)
+
+	local function headerButton(text, xOffset)
+		local b = make("TextButton", {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, xOffset, 0.5, 0),
+			Size = UDim2.fromOffset(26, 26),
+			BackgroundColor3 = Neon.Panel,
+			AutoButtonColor = false,
+			Font = Enum.Font.GothamBold,
+			TextSize = 14,
+			TextColor3 = Neon.Text,
+			Text = text,
+			ZIndex = Z + 2,
+		}, header)
+		addCorner(b, 13)
+		b.MouseEnter:Connect(function()
+			TweenService:Create(b, TweenInfo.new(0.12), { BackgroundColor3 = Neon.Accent, TextColor3 = Neon.TextOn }):Play()
+		end)
+		b.MouseLeave:Connect(function()
+			TweenService:Create(b, TweenInfo.new(0.2), { BackgroundColor3 = Neon.Panel, TextColor3 = Neon.Text }):Play()
+		end)
+		return b
+	end
+	local closeBtn = headerButton("×", -12)
+
+	-- Sidebar
+	local sidebar = make("ScrollingFrame", {
+		Position = UDim2.fromOffset(0, HEADER_H),
+		Size = UDim2.new(0, SIDEBAR_W, 1, -HEADER_H),
+		BackgroundColor3 = Neon.Panel,
+		BackgroundTransparency = 0.35,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 2,
+		ScrollBarImageColor3 = Neon.Accent,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		ZIndex = Z + 1,
+	}, hub)
+	make("UIListLayout", { Padding = UDim.new(0, 3), SortOrder = Enum.SortOrder.LayoutOrder }, sidebar)
+	make("UIPadding", {
+		PaddingTop = UDim.new(0, 8),
+		PaddingBottom = UDim.new(0, 8),
+		PaddingLeft = UDim.new(0, 8),
+		PaddingRight = UDim.new(0, 8),
+	}, sidebar)
+
+	-- Content area
+	local content = make("Frame", {
+		Position = UDim2.fromOffset(SIDEBAR_W, HEADER_H),
+		Size = UDim2.new(1, -SIDEBAR_W, 1, -HEADER_H),
+		BackgroundTransparency = 1,
+		ZIndex = Z + 1,
+	}, hub)
+
+	local search = make("TextBox", {
+		Position = UDim2.fromOffset(12, 10),
+		Size = UDim2.new(1, -24, 0, 30),
+		BackgroundColor3 = Neon.Panel,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.Gotham,
+		TextSize = 13,
+		TextColor3 = Neon.Text,
+		PlaceholderColor3 = Dim,
+		PlaceholderText = "Search all commands...",
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = Z + 2,
+	}, content)
+	addCorner(search, 6)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 10) }, search)
+
+	local list = make("ScrollingFrame", {
+		Position = UDim2.fromOffset(12, 48),
+		Size = UDim2.new(1, -18, 1, -48 - 50),
+		BackgroundTransparency = 1,
+		BorderSizePixel = 0,
+		ScrollBarThickness = 3,
+		ScrollBarImageColor3 = Neon.Accent,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.new(),
+		ZIndex = Z + 2,
+	}, content)
+	make("UIListLayout", { Padding = UDim.new(0, 5), SortOrder = Enum.SortOrder.LayoutOrder }, list)
+
+	local cmdInput = make("TextBox", {
+		AnchorPoint = Vector2.new(0, 1),
+		Position = UDim2.new(0, 12, 1, -10),
+		Size = UDim2.new(1, -24, 0, 32),
+		BackgroundColor3 = Neon.Panel,
+		ClearTextOnFocus = false,
+		Font = Enum.Font.Code,
+		TextSize = 14,
+		TextColor3 = Neon.Accent,
+		PlaceholderColor3 = Dim,
+		PlaceholderText = "> type a command and press Enter",
+		Text = "",
+		TextXAlignment = Enum.TextXAlignment.Left,
+		ZIndex = Z + 2,
+	}, content)
+	addCorner(cmdInput, 6)
+	addGlow(cmdInput)
+	make("UIPadding", { PaddingLeft = UDim.new(0, 10) }, cmdInput)
+
+	-- Command rows
+	local function flash(label)
+		local old = label.Text
+		label.Text = "OK"
+		task.delay(0.6, function()
+			if label.Parent then label.Text = old end
+		end)
+	end
+
+	local function makeRow(entry, order)
+		local cmdName = entry.NAME:match("^(%S+)")
+		local needsArgs = entry.NAME:find("%[") ~= nil and not entry.Action
+
+		local row = make("TextButton", {
+			Size = UDim2.new(1, -4, 0, 42),
+			BackgroundColor3 = Neon.Panel,
+			AutoButtonColor = false,
+			Text = "",
+			LayoutOrder = order,
+			ZIndex = Z + 3,
+		})
+		addCorner(row, 6)
+
+		make("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(12, 5),
+			Size = UDim2.new(1, -100, 0, 18),
+			Font = Enum.Font.GothamBold,
+			TextSize = 13,
+			TextColor3 = Neon.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Text = entry.NAME,
+			ZIndex = Z + 4,
+		}, row)
+
+		make("TextLabel", {
+			BackgroundTransparency = 1,
+			Position = UDim2.fromOffset(12, 23),
+			Size = UDim2.new(1, -100, 0, 14),
+			Font = Enum.Font.Gotham,
+			TextSize = 11,
+			TextColor3 = Dim,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			TextTruncate = Enum.TextTruncate.AtEnd,
+			Text = entry.DESC,
+			ZIndex = Z + 4,
+		}, row)
+
+		local badge = make("TextLabel", {
+			AnchorPoint = Vector2.new(1, 0.5),
+			Position = UDim2.new(1, -10, 0.5, 0),
+			Size = UDim2.fromOffset(60, 22),
+			BackgroundColor3 = needsArgs and Neon.Bg or Neon.Accent,
+			Font = Enum.Font.GothamBold,
+			TextSize = 11,
+			TextColor3 = needsArgs and Neon.Accent or Neon.TextOn,
+			Text = needsArgs and "ARGS" or "RUN",
+			ZIndex = Z + 4,
+		}, row)
+		addCorner(badge, 11)
+
+		row.MouseEnter:Connect(function()
+			TweenService:Create(row, TweenInfo.new(0.12), { BackgroundColor3 = RowHover }):Play()
+		end)
+		row.MouseLeave:Connect(function()
+			TweenService:Create(row, TweenInfo.new(0.2), { BackgroundColor3 = Neon.Panel }):Play()
+		end)
+
+		row.MouseButton1Click:Connect(function()
+			if entry.Action then
+				entry.Action()
+				flash(badge)
+			elseif needsArgs then
+				-- Needs arguments: prefill the command box and let the user finish it
+				cmdInput.Text = cmdName .. " "
+				cmdInput:CaptureFocus()
+				cmdInput.CursorPosition = #cmdInput.Text + 1
+			else
+				execCmd(cmdName, Players.LocalPlayer, true)
+				flash(badge)
+			end
+		end)
+
+		row.Parent = list
+		return row
+	end
+
+	local function showCommands(entries)
+		for _, child in ipairs(list:GetChildren()) do
+			if child:IsA("GuiObject") then
+				child:Destroy()
+			end
+		end
+		for i, entry in ipairs(entries) do
+			makeRow(entry, i)
+		end
+		list.CanvasPosition = Vector2.zero
+	end
+
+	-- Settings tab
+	table.insert(sections, {
+		Name = "Settings",
+		Commands = {
+			{ NAME = "Show classic bar", DESC = "Bring back the original bottom-right command bar", Action = function()
+				Holder.Visible = true
+				execCmd("showiy")
+			end },
+			{ NAME = "Hide classic bar", DESC = "Hide the original bottom-right command bar", Action = function()
+				Holder.Visible = false
+			end },
+			{ NAME = "Open logs", DESC = "Chat and join logs window", Action = function()
+				execCmd("logs")
+			end },
+			{ NAME = "Server info", DESC = "Place, server and player info", Action = function()
+				execCmd("serverinfo")
+			end },
+			{ NAME = "Stop all loops", DESC = "Stops every running ;N^cmd loop", Action = function()
+				execCmd("breakloops")
+			end },
+		},
+	})
+
+	-- Tabs
+	local currentSection
+	local tabs = {}
+
+	local function selectTab(section)
+		currentSection = section
+		for s, t in pairs(tabs) do
+			local active = s == section
+			t.Button.BackgroundTransparency = active and 0 or 1
+			t.Button.TextColor3 = active and Neon.Accent or Neon.Text
+			t.Bar.Visible = active
+		end
+		if search.Text ~= "" then
+			search.Text = "" -- the search handler redraws the current tab
+		else
+			showCommands(section.Commands)
+		end
+	end
+
+	for i, section in ipairs(sections) do
+		local btn = make("TextButton", {
+			Size = UDim2.new(1, 0, 0, 30),
+			BackgroundColor3 = Neon.Bg,
+			BackgroundTransparency = 1,
+			AutoButtonColor = false,
+			Font = Enum.Font.GothamMedium,
+			TextSize = 13,
+			TextColor3 = Neon.Text,
+			TextXAlignment = Enum.TextXAlignment.Left,
+			Text = "    " .. section.Name,
+			LayoutOrder = i,
+			ZIndex = Z + 2,
+		}, sidebar)
+		addCorner(btn, 6)
+		local bar = make("Frame", {
+			Position = UDim2.new(0, 0, 0.5, -8),
+			Size = UDim2.fromOffset(3, 16),
+			BackgroundColor3 = Color3.new(1, 1, 1),
+			BorderSizePixel = 0,
+			Visible = false,
+			ZIndex = Z + 3,
+		}, btn)
+		neonGradient(bar)
+		tabs[section] = { Button = btn, Bar = bar }
+		btn.MouseButton1Click:Connect(function()
+			selectTab(section)
+		end)
+	end
+
+	-- Search across every tab
+	search:GetPropertyChangedSignal("Text"):Connect(function()
+		local query = search.Text:lower()
+		if query == "" then
+			showCommands(currentSection.Commands)
+			return
+		end
+		local results = {}
+		for _, section in ipairs(sections) do
+			for _, entry in ipairs(section.Commands) do
+				if entry.NAME:lower():find(query, 1, true) or entry.DESC:lower():find(query, 1, true) then
+					table.insert(results, entry)
+				end
+			end
+		end
+		showCommands(results)
+	end)
+
+	-- IY remembers the text of any TextBox you press Enter in and re-runs it the
+	-- next time you chat, so clear that after our own boxes lose focus
+	local function forgetEnteredText()
+		task.delay(0.1, function()
+			lastEnteredString = nil
+		end)
+	end
+	search.FocusLost:Connect(forgetEnteredText)
+
+	-- Command box (Enter runs it, Up/Down browses history)
+	cmdInput.FocusLost:Connect(function(enterPressed)
+		forgetEnteredText()
+		if not enterPressed then return end
+		local text = (cmdInput.Text:gsub("^%s+", ""))
+		if text:sub(1, #prefix) == prefix then
+			text = text:sub(#prefix + 1)
+		end
+		if text ~= "" then
+			execCmd(text, Players.LocalPlayer, true)
+		end
+		cmdInput.Text = ""
+	end)
+
+	local historyIndex = 0
+	cmdInput.Focused:Connect(function()
+		historyIndex = 0
+	end)
+	UserInputService.InputBegan:Connect(function(input)
+		if not cmdInput:IsFocused() then return end
+		if input.KeyCode == Enum.KeyCode.Up then
+			historyIndex = math.min(historyIndex + 1, #cmdHistory)
+		elseif input.KeyCode == Enum.KeyCode.Down then
+			historyIndex = math.max(historyIndex - 1, 0)
+		else
+			return
+		end
+		cmdInput.Text = cmdHistory[historyIndex] or ""
+		cmdInput.CursorPosition = #cmdInput.Text + 1
+	end)
+
+	-- Dragging by the header
+	do
+		local dragging, dragStart, startPos
+		header.InputBegan:Connect(function(input)
+			if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+				dragging = true
+				dragStart = input.Position
+				startPos = hub.Position
+				input.Changed:Connect(function()
+					if input.UserInputState == Enum.UserInputState.End then
+						dragging = false
+					end
+				end)
+			end
+		end)
+		UserInputService.InputChanged:Connect(function(input)
+			if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+				-- ScaledHolder is scaled by IY's guiscale, so convert screen pixels
+				local s = (Scale and Scale.Scale > 0) and Scale.Scale or 1
+				local delta = (input.Position - dragStart) / s
+				hub.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+			end
+		end)
+	end
+
+	-- Open / close
+	local hubOpen = false
+	local function setHubOpen(open)
+		hubOpen = open
+		if open then
+			hub.Visible = true
+			hubScale.Scale = 0.94
+			TweenService:Create(hubScale, TweenInfo.new(0.18, Enum.EasingStyle.Quart, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		else
+			local t = TweenService:Create(hubScale, TweenInfo.new(0.12, Enum.EasingStyle.Quart, Enum.EasingDirection.In), { Scale = 0.94 })
+			t.Completed:Connect(function()
+				if not hubOpen then hub.Visible = false end
+			end)
+			t:Play()
+		end
+	end
+
+	closeBtn.MouseButton1Click:Connect(function()
+		setHubOpen(false)
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, gameProcessed)
+		if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+			setHubOpen(not hubOpen)
+		end
+	end)
+
+	-- Prefix key opens the hub and focuses the command box (while the classic bar is hidden)
+	IYMouse.KeyDown:Connect(function(key)
+		if key == prefix and not Holder.Visible then
+			setHubOpen(true)
+			RunService.RenderStepped:Wait()
+			RunService.RenderStepped:Wait()
+			cmdInput:CaptureFocus()
+		end
+	end)
+
+	-- Small pill at the top of the screen (also works on mobile)
+	local pill = make("TextButton", {
+		Name = randomString(),
+		AnchorPoint = Vector2.new(0.5, 0),
+		Position = UDim2.new(0.5, 0, 0, 8),
+		Size = UDim2.fromOffset(48, 24),
+		BackgroundColor3 = Neon.Bg,
+		AutoButtonColor = false,
+		Font = Enum.Font.GothamBlack,
+		TextSize = 12,
+		TextColor3 = Neon.Accent,
+		Text = "IY",
+		ZIndex = Z,
+	})
+	addCorner(pill, 12)
+	addGlow(pill)
+	pill.MouseButton1Click:Connect(function()
+		setHubOpen(not hubOpen)
+	end)
+
+	hub.Parent = ScaledHolder
+	pill.Parent = ScaledHolder
+
+	-- Hide the classic bottom bar and open the hub
+	Holder.Visible = false
+	selectTab(sections[1])
+	setHubOpen(true)
 
 	print("[IY Neon] skin + fixes loaded")
 end
