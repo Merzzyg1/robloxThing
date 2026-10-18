@@ -3,7 +3,7 @@ if IY_LOADED and not _G.IY_DEBUG then
 	return
 end
 
-pcall(function() getgenv().IY_LOADED = true end)
+pcall(function() getgenv().aY_LOADED = true end)
 if not game:IsLoaded() then game.Loaded:Wait() end
 
 function missing(t, f, fallback)
@@ -13162,7 +13162,9 @@ updateColors(currentScroll,scroll)
 	  - Styles windows created later too (popups, server info, logs, plugins)
 	  - Tabbed hub menu replaces the bottom bar: sidebar tabs per category,
 	    search across all commands, command box with history.
-	    RightShift or the "IY" pill toggles it; the prefix key opens it.
+	    Insert or the "IY" pill toggles it; the prefix key opens it.
+	    While it's open, game input (movement, camera, clicks) is blocked
+	    and the mouse is unlocked.
 	  - Fixes: clientantikick, god, inviteprompt, emote, enablestate/disablestate,
 	    unhatspin, fireclickdetectors, fireproximityprompts
 ]]
@@ -13523,7 +13525,8 @@ do
 
 	------------------------------------------------------------------
 	-- Tabbed hub menu (replaces the bottom bar)
-	--   RightShift / the "IY" pill at the top toggles it
+	--   Insert / the "IY" pill at the top toggles it
+	--   Game input is blocked while it's open
 	--   The prefix key (;) opens it and focuses the command box
 	------------------------------------------------------------------
 	local SECTION_NAMES = {
@@ -13610,7 +13613,7 @@ do
 		TextSize = 11,
 		TextColor3 = Dim,
 		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = "v" .. currentVersion .. "  •  RightShift to toggle  •  " .. totalCommands .. " commands",
+		Text = "v" .. currentVersion .. "  •  Insert to toggle  •  " .. totalCommands .. " commands",
 		ZIndex = Z + 2,
 	}, header)
 
@@ -13971,10 +13974,45 @@ do
 		end)
 	end
 
+	-- Input blocking while the hub is open
+	--   A visible Modal button frees the mouse from first person / shift lock,
+	--   and a high-priority ContextAction sinks keyboard, mouse and gamepad
+	--   input so the character, camera and tools ignore it. Typing in a
+	--   TextBox still works because focused TextBoxes get keys first.
+	make("TextButton", {
+		BackgroundTransparency = 1,
+		Size = UDim2.fromOffset(0, 0),
+		Text = "",
+		Modal = true,
+		ZIndex = Z,
+	}, hub)
+
+	local SINK_ACTION = "IYHubSinkInput"
+	local function sinkInput()
+		return Enum.ContextActionResult.Sink
+	end
+
+	local function setInputBlocked(blocked)
+		if blocked then
+			ContextActionService:BindActionAtPriority(SINK_ACTION, sinkInput, false, Enum.ContextActionPriority.High.Value + 100,
+				Enum.UserInputType.Keyboard,
+				Enum.UserInputType.MouseButton1,
+				Enum.UserInputType.MouseButton2,
+				Enum.UserInputType.MouseButton3,
+				Enum.UserInputType.MouseWheel,
+				Enum.UserInputType.Gamepad1
+			)
+		else
+			ContextActionService:UnbindAction(SINK_ACTION)
+		end
+	end
+
 	-- Open / close
 	local hubOpen = false
 	local function setHubOpen(open)
+		if open == hubOpen then return end
 		hubOpen = open
+		setInputBlocked(open)
 		if open then
 			hub.Visible = true
 			hubScale.Scale = 0.94
@@ -13992,8 +14030,12 @@ do
 		setHubOpen(false)
 	end)
 
-	UserInputService.InputBegan:Connect(function(input, gameProcessed)
-		if not gameProcessed and input.KeyCode == Enum.KeyCode.RightShift then
+	-- Insert toggles the hub. gameProcessed is ignored on purpose: while the hub
+	-- is open our ContextAction sinks the keyboard, which marks keys as processed.
+	-- Skip it while typing in any TextBox (chat, the hub's own boxes).
+	local TOGGLE_KEY = Enum.KeyCode.Insert
+	UserInputService.InputBegan:Connect(function(input)
+		if input.KeyCode == TOGGLE_KEY and not UserInputService:GetFocusedTextBox() then
 			setHubOpen(not hubOpen)
 		end
 	end)
